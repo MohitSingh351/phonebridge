@@ -1,0 +1,8 @@
+.DS_Store
+# Swift / Xcode
+mac/Packages/*/.build/
+mac/**/xcuserdata/
+mac/**/DerivedData/
+*.xcuserstate
+# Python
+__pycache__/

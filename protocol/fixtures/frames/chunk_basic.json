@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": 1,
+  "transferId": "0f0e0d0c-0b0a-4908-8706-050403020100",
+  "offset": 0,
+  "length": 11,
+  "crc32": 2435456248,
+  "payloadHex": "50686f6e65427269646765"
+}

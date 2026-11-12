@@ -1,0 +1,1 @@
+{"v":1,"type":"phone.ring.state","id":"0b000000-0000-4000-8000-000000000003","seq":30,"re":"0b000000-0000-4000-8000-000000000002","ts":1762934505020,"payload":{"ringing":false,"remainingSec":0,"reason":"stopped_remotely"}}
