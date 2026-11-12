@@ -90,7 +90,7 @@ private fun App(graph: AppGraph, modifier: Modifier) {
         link is LinkState.NotPaired || wantsPairing || pairing !is PairingState.Idle ->
             PairingScreen(graph.pairing, modifier) { wantsPairing = false }
         else -> Home(
-            link, modifier, graph.files,
+            link, modifier, graph.files, graph.notifications,
             onRetry = graph.connection::retryNow,
             onConnect = graph::reconnect,
             onUnpair = graph::unpair,
@@ -120,6 +120,7 @@ private fun LocalNetworkRationale(modifier: Modifier, onAllow: () -> Unit) {
 @Composable
 private fun Home(
     link: LinkState, modifier: Modifier, files: dev.phonebridge.files.FilesFeature,
+    notifications: dev.phonebridge.notifications.NotificationsFeature,
     onRetry: () -> Unit, onConnect: () -> Unit, onUnpair: () -> Unit, onPairAgain: () -> Unit,
 ) {
     var confirmUnpair by remember { mutableStateOf(false) }
@@ -159,11 +160,12 @@ private fun Home(
 
         if (link !is LinkState.Removed) {
             dev.phonebridge.files.FilesSection(files, connected = link is LinkState.Connected)
+            dev.phonebridge.notifications.NotificationsSection(notifications)
         }
 
         Spacer(Modifier.height(8.dp))
         Text(
-            "Clipboard, files, notifications and Find My Phone arrive in the next updates.",
+            "Battery status and Find My Phone arrive in a later update.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         TextButton(onClick = { confirmUnpair = true }) { Text("Unpair this phone") }

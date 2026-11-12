@@ -19,7 +19,8 @@ phone status and find-my-phone. The devices talk directly over Wi-Fi using mutua
 | 3 Status/find phone | ⏸ skipped for now |
 | 4 Clipboard | ✅ |
 | 5 Files | ✅ |
-| 6 Notifications · 7 Polish · 8 Hardening | – |
+| 6 Notifications | ✅ |
+| 7 Polish · 8 Hardening | – |
 
 ## Changing the protocol
 

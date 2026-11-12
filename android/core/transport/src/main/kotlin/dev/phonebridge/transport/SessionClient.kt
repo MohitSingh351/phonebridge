@@ -48,6 +48,8 @@ sealed interface ClientEvent {
     data object Revoked : ClientEvent
     /** A message for an enabled feature. */
     data class Message(val envelope: Envelope) : ClientEvent
+    /** The Mac answered `capabilities.changed` with a new enabled set (PROTOCOL.md §4.5). */
+    data class EnabledChanged(val enabled: List<String>) : ClientEvent
 }
 
 sealed interface ClientAction {
@@ -225,6 +227,10 @@ class SessionClient private constructor(
         Types.PAIR_REVOKED.type -> {
             state = State.CLOSED
             listOf(ClientAction.Emit(ClientEvent.Revoked))
+        }
+        Types.CAPABILITIES_ENABLED.type -> {
+            val m = runCatching { env.decode(Types.CAPABILITIES_ENABLED) }.getOrNull()
+            if (m == null) emptyList() else listOf(ClientAction.Emit(ClientEvent.EnabledChanged(m.enabled)))
         }
         else -> listOf(ClientAction.Emit(ClientEvent.Message(env)))
     }

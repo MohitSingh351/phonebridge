@@ -266,6 +266,32 @@ struct ReadyTests {
         #expect(h.isReady)
     }
 
+    @Test func capabilityChangeMidSessionEnablesAndDisables() throws {
+        let hx = Harness()
+        var phone = FakePhone()
+        let h = hx.ready(&phone, caps: [Capability(id: "clipboard", v: 1, state: .available),
+                                        Capability(id: "files", v: 1, state: .permissionMissing)])
+        // Permission granted on the phone → files enabled, messages now routed.
+        let grant = h.receive(phone.frame(CapabilitiesChanged(capabilities: [Capability(id: "files", v: 1, state: .available)])))
+        let enabled = try #require(try grant.sent.first?.decode(CapabilitiesEnabled.self))
+        #expect(enabled.enabled == ["clipboard", "files"])
+        #expect(grant.sent.first?.re != nil)
+        #expect(grant.events == [.enabledChanged(["clipboard", "files"])])
+        guard case .message = h.receive(phone.frame(FilePause(transferId: .random()))).events.first else {
+            Issue.record("files not routed after grant"); return
+        }
+        // Revoked → disabled again; unchanged report → no event.
+        let revoke = h.receive(phone.frame(CapabilitiesChanged(capabilities: [Capability(id: "files", v: 1, state: .permissionMissing)])))
+        #expect(revoke.events == [.enabledChanged(["clipboard"])])
+        #expect(h.receive(phone.frame(FilePause(transferId: .random()))).errorCode == .featureDisabled)
+        let same = h.receive(phone.frame(CapabilitiesChanged(capabilities: [Capability(id: "files", v: 1, state: .permissionMissing)])))
+        #expect(same.events.isEmpty)
+        // A feature the Mac doesn't have can't be enabled by the phone.
+        let unknown = h.receive(phone.frame(CapabilitiesChanged(capabilities: [Capability(id: "status", v: 1, state: .available)])))
+        #expect(try unknown.sent.first?.decode(CapabilitiesEnabled.self).enabled == ["clipboard"])
+        #expect(h.isReady)
+    }
+
     @Test func unknownTypeIsNonFatal() {
         let hx = Harness()
         var phone = FakePhone()

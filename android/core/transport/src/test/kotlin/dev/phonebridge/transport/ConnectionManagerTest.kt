@@ -1,5 +1,7 @@
 package dev.phonebridge.transport
 
+import dev.phonebridge.protocol.CapabilitiesEnabled
+import dev.phonebridge.protocol.CapabilityState
 import dev.phonebridge.protocol.Envelope
 import dev.phonebridge.protocol.EnvelopeCodec
 import dev.phonebridge.protocol.ErrorCode
@@ -79,14 +81,31 @@ class ConnectionManagerTest {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val env = EnvelopeCodec.decode(text)
                 if (env.type == Types.AUTH.type) {
-                    webSocket.send(EnvelopeCodec.encode(Envelope.make(Types.READY, Ready(UUID.randomUUID(), emptyList()), seq++, re = env.id)))
+                    val caps = env.decode(Types.AUTH).capabilities
+                    val enabled = caps.filter { it.state == CapabilityState.AVAILABLE }.map { it.id }
+                    webSocket.send(EnvelopeCodec.encode(Envelope.make(Types.READY, Ready(UUID.randomUUID(), enabled), seq++, re = env.id)))
                     after(webSocket)
+                }
+                if (env.type == Types.CAPABILITIES_CHANGED.type) {
+                    val enabled = env.decode(Types.CAPABILITIES_CHANGED).capabilities.filter { it.state == CapabilityState.AVAILABLE }.map { it.id }
+                    webSocket.send(EnvelopeCodec.encode(Envelope.make(Types.CAPABILITIES_ENABLED, CapabilitiesEnabled(enabled), seq++, re = env.id)))
                 }
             }
         }).build()
 
-    private fun manager(store: MacStore, locator: MacLocator = MacLocator { null }) =
-        ConnectionManager(store, { phone }, scope, connector, locator, online, backoff = { 50L })
+    private fun manager(store: MacStore, locator: MacLocator = MacLocator { null }, features: List<Feature> = emptyList()) =
+        ConnectionManager(store, { phone }, scope, connector, locator, online, backoff = { 50L }, features = features)
+
+    /** A feature whose permission can be granted/revoked mid-session. */
+    private class ToggleFeature : Feature {
+        override val id = "notifications"
+        @Volatile var granted = false
+        val starts = java.util.concurrent.atomic.AtomicInteger()
+        val ends = java.util.concurrent.atomic.AtomicInteger()
+        override fun state() = if (granted) CapabilityState.AVAILABLE else CapabilityState.PERMISSION_MISSING
+        override suspend fun onSessionStarted(link: FeatureLink) { starts.incrementAndGet() }
+        override fun onSessionEnded() { ends.incrementAndGet() }
+    }
 
     private suspend fun ConnectionManager.awaitState(timeoutMs: Long = 5_000, p: (LinkState) -> Boolean) =
         withTimeout(timeoutMs) { state.first(p) }
@@ -104,6 +123,28 @@ class ConnectionManagerTest {
         delay(300)
         m.awaitState { it is LinkState.Connected }
         assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `permission granted then revoked mid-session starts and stops the feature without reconnecting`() = runBlocking {
+        server.enqueue(fakeMac())
+        val f = ToggleFeature()
+        val m = manager(Store(server.port), features = listOf(f))
+        m.start()
+        m.awaitState { it is LinkState.Connected }
+        assertEquals(0, f.starts.get())
+
+        f.granted = true
+        m.capabilitiesChanged()
+        m.awaitState { it is LinkState.Connected && "notifications" in it.enabled }
+        withTimeout(2_000) { while (f.starts.get() == 0) delay(10) }
+
+        f.granted = false
+        m.capabilitiesChanged()
+        m.awaitState { it is LinkState.Connected && "notifications" !in it.enabled }
+        withTimeout(2_000) { while (f.ends.get() == 0) delay(10) }
+        assertEquals(1, f.starts.get())
+        assertEquals(1, server.requestCount) // same session throughout
     }
 
     @Test

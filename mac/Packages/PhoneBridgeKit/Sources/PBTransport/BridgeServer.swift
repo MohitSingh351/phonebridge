@@ -319,6 +319,13 @@ public final class BridgeServer: @unchecked Sendable {
             let active = features.filter { enabled.contains($0.id) }
             links[id] = (link, active)
             for f in active { f.sessionStarted(link) }
+        case .enabledChanged(let enabled):
+            guard let entry = links[id] else { return }
+            let now = features.filter { enabled.contains($0.id) }
+            let was = Set(entry.active.map(\.id))
+            links[id] = (entry.link, now)
+            for f in entry.active where !enabled.contains(f.id) { f.sessionEnded(entry.link) }
+            for f in now where !was.contains(f.id) { f.sessionStarted(entry.link) }
         case .message(let env):
             guard let entry = links[id], let owner = SessionHandler.featureId(for: env.type),
                   let f = entry.active.first(where: { $0.id == owner }) else { return }

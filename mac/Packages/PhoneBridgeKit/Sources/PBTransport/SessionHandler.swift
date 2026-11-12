@@ -34,6 +34,8 @@ public enum SessionEvent: Equatable, Sendable {
     case unpaired(PBUUID)
     /// A message for an enabled feature (routed by the server to the owning feature module).
     case message(Envelope)
+    /// The phone's capabilities changed mid-session (e.g. notification access granted); new enabled set.
+    case enabledChanged([String])
 }
 
 public enum SessionAction: Equatable, Sendable {
@@ -68,6 +70,8 @@ public final class SessionHandler: @unchecked Sendable {
     private var inbound = InboundSequence()
     private var outbound = OutboundSequence()
     private var state: State = .idle
+    /// The phone's latest capability states (from `auth`, updated by `capabilities.changed`).
+    private var peerCaps: [String: CapabilityState] = [:]
     private var startedAt = Date.distantPast
     private var lastInbound = Date.distantPast
 
@@ -217,9 +221,8 @@ public final class SessionHandler: @unchecked Sendable {
             return fail(.authFailed, "signature verification failed", re: env.id)
         }
 
-        let mine = Set(mac.capabilities.filter { $0.state == .available }.map(\.id))
-        let theirs = Set(auth.capabilities.filter { $0.state == .available }.map(\.id))
-        let enabled = mine.intersection(theirs)
+        for c in auth.capabilities { peerCaps[c.id] = c.state }
+        let enabled = enabledSet()
         let sessionId = PBUUID.random()
         var seen = device
         seen.lastSeen = now()
@@ -270,6 +273,16 @@ public final class SessionHandler: @unchecked Sendable {
             return [.close(code: ErrorCode.revoked.closeCode!, reason: "unpaired"), .event(.unpaired(device.id))]
         case ErrorPayload.type:
             return []
+        case CapabilitiesChanged.type:
+            guard let msg = try? env.decode(CapabilitiesChanged.self) else {
+                return [send(ErrorPayload(code: .invalidPayload, message: env.type, fatal: false), re: env.id)]
+            }
+            for c in msg.capabilities { peerCaps[c.id] = c.state }
+            let now = enabledSet()
+            if case .ready(let d, let sid, _, let hb) = state { state = .ready(d, sessionId: sid, enabled: now, heartbeatSec: hb) }
+            var out = [send(CapabilitiesEnabled(enabled: now.sorted()), re: env.id)]
+            if now != enabled { out.append(.event(.enabledChanged(now.sorted()))) }
+            return out
         default:
             guard MessageRegistry.byType[env.type] != nil else {
                 return [send(ErrorPayload(code: .unsupportedType, message: env.type, fatal: false), re: env.id)]
@@ -293,6 +306,13 @@ public final class SessionHandler: @unchecked Sendable {
     }
 
     // MARK: Helpers
+
+    /// Features both sides currently have available (PROTOCOL.md §4.3, §4.5).
+    private func enabledSet() -> Set<String> {
+        let mine = Set(mac.capabilities.filter { $0.state == .available }.map(\.id))
+        let theirs = Set(peerCaps.filter { $0.value == .available }.map(\.key))
+        return mine.intersection(theirs)
+    }
 
     private func send<P: MessagePayload>(_ p: P, re: PBUUID? = nil) -> SessionAction {
         // Encoding our own well-formed payloads cannot fail.

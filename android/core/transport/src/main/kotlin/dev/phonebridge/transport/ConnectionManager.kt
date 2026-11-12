@@ -1,5 +1,6 @@
 package dev.phonebridge.transport
 
+import dev.phonebridge.protocol.CapabilitiesChanged
 import dev.phonebridge.protocol.ErrorCode
 import dev.phonebridge.protocol.Features
 import dev.phonebridge.protocol.MessagePayload
@@ -116,6 +117,14 @@ class ConnectionManager(
         }
     }
 
+    /**
+     * A feature's [Feature.state] changed (e.g. notification access granted or revoked): tell the Mac, which
+     * answers with the new enabled set. No-op when not connected (the next `auth` carries the new state).
+     */
+    fun capabilitiesChanged() {
+        send { it.outgoing(Types.CAPABILITIES_CHANGED, CapabilitiesChanged(features.map { f -> f.capability() })) }
+    }
+
     /** Send a feature message on the live session (dropped if not connected). */
     fun send(build: (SessionClient) -> List<ClientAction>) {
         val conn = current ?: return
@@ -159,6 +168,14 @@ class ConnectionManager(
                         _state.value = LinkState.Connected(mac.name, e.enabled)
                         active = features.filter { it.id in e.enabled }
                         active.forEach { runCatching { it.onSessionStarted(link) } }
+                    }
+                    is ClientEvent.EnabledChanged -> {
+                        val now = features.filter { it.id in e.enabled }
+                        val was = active
+                        active = now
+                        _state.value = LinkState.Connected(mac.name, e.enabled)
+                        was.filter { it !in now }.forEach { runCatching { it.onSessionEnded() } }
+                        now.filter { it !in was }.forEach { runCatching { it.onSessionStarted(link) } }
                     }
                     ClientEvent.Revoked -> removed = true
                     is ClientEvent.Rejected -> if (e.code == ErrorCode.REVOKED) removed = true

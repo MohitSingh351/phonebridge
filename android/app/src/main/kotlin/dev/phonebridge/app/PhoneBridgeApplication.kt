@@ -11,6 +11,8 @@ import dev.phonebridge.clipboard.ClipboardFeature
 import dev.phonebridge.clipboard.ClipboardHost
 import dev.phonebridge.files.FilesFeature
 import dev.phonebridge.files.FilesHost
+import dev.phonebridge.notifications.NotificationsFeature
+import dev.phonebridge.notifications.NotificationsHost
 import android.content.Intent
 import dev.phonebridge.security.PairingStore
 import dev.phonebridge.transport.ConnectionManager
@@ -65,9 +67,13 @@ class AppGraph(private val app: Application) {
     val files = FilesFeature(app, scope, openApp = {
         Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     })
-    private val features = listOf(clipboard, files)
+    val notifications = NotificationsFeature(app, onStateChanged = {
+        android.util.Log.i("PhoneBridge", "capabilities changed: ${features.map { it.capability() }}")
+        connection.capabilitiesChanged()
+    })
+    private val features: List<dev.phonebridge.transport.Feature> = listOf(clipboard, files, notifications)
 
-    val connection = ConnectionManager(
+    val connection: ConnectionManager = ConnectionManager(
         store, phoneInfo, scope,
         connector = KeystoreConnector(),
         locator = NsdMacLocator(app),
@@ -103,21 +109,26 @@ class AppGraph(private val app: Application) {
     }
 }
 
-class PhoneBridgeApplication : Application(), ClipboardHost, FilesHost {
+class PhoneBridgeApplication : Application(), ClipboardHost, FilesHost, NotificationsHost {
     lateinit var graph: AppGraph
         private set
 
     override val clipboard: ClipboardFeature get() = graph.clipboard
     override val files: FilesFeature get() = graph.files
+    override val notifications: NotificationsFeature get() = graph.notifications
 
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
         BridgeService.ensureChannel(this)
         if (graph.shouldRun()) Watchdog.schedule(this)
+        graph.notifications.recheck() // rebinds the listener if access is granted but it isn't bound
         // Opening the app is always allowed to start the foreground service, and resets any backoff.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = graph.ensureRunning()
+            override fun onStart(owner: LifecycleOwner) {
+                graph.notifications.recheck() // e.g. back from granting/revoking notification access
+                graph.ensureRunning()
+            }
         })
     }
 }

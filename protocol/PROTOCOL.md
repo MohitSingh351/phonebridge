@@ -431,12 +431,30 @@ offset  size  field
 {"v":1,"type":"notif.icon","id":"0e000000-0000-4000-8000-000000000005","seq":5,"ts":1762934400310,"payload":{"pkg":"com.whatsapp","png":"iVBORw0KGgo"}}
 ```
 
-- `notif.icon` is sent once per package per session, before the first `notif.posted` of that package
-  (PNG ≤ 64×64, ≤ 16 KiB). Mac caches icons by `pkg`.
-- `redacted: true` when Android has hidden the content (e.g. sensitive/OTP notifications, Android 15+).
-- `notif.sync` is sent after `ready` (when `notifications` is enabled) and replaces the Mac's mirror state.
-- Phone MUST skip: ongoing/foreground-service notifications, group summaries, its own notifications, and
-  packages the user disabled.
+- **Capability state (phone):** `available` when notification access is granted and the user's "Notifications
+  on Mac" switch is on; `permission_missing` without access; `disabled` when switched off. Granting or
+  revoking access mid-session sends `capabilities.changed` (§4.5); no reconnect is needed. The Mac shows
+  "allow notification access on <phone>" while the feature isn't enabled for a connected phone.
+- `notif.icon` is sent once per package per session, before the first `notif.posted` (or `notif.sync`) that
+  uses that package (PNG ≤ 64×64, ≤ 16 KiB; oversized icons are simply not sent). Mac caches icons by `pkg`.
+- `redacted: true` when the phone knows Android hid the content. Android 15+ replaces sensitive content
+  (one-time codes, …) with its own placeholder text before companion listeners see it and exposes no
+  public flag, so phones usually send the placeholder text with `redacted: false`.
+- `notif.sync` is sent at session start (or when the listener binds later, or the user changes the app
+  filter) and **replaces** the Mac's state for that phone. Items new to the Mac arrive quietly (Notification
+  Center only, no banner or sound); only live `notif.posted` alerts.
+- `notif.posted` with a `key` the Mac already has **replaces** it. Phones don't re-send identical content
+  (title/text/subText/app unchanged) for the same key, so silent refreshes don't re-alert.
+- `notif.removed` is only sent for keys the Mac currently has.
+- `notif.dismiss` (Mac → phone): the user dismissed it on the Mac ("Dismiss on Phone", clearing it in
+  Notification Center, or ✕ in the menu). The phone cancels it; the removal then flows back as
+  `notif.removed`. If the phone is offline the Mac just removes it locally and the next sync is authoritative.
+- Phone MUST skip: non-clearable (ongoing / foreground-service / no-clear) notifications, group summaries,
+  media-session notifications, channels with importance ≤ MIN, its own notifications, packages the user
+  turned off, and notifications with neither title nor text.
+- Limits (phone trims before sending): `app`/`title` ≤ 256 chars, `text` ≤ 2000 chars (`…` appended when
+  cut), `subText` ≤ 128 chars, `notif.sync` ≤ 100 newest items.
+- Nothing is queued while offline (§12): the next session's `notif.sync` carries the current state.
 
 ---
 

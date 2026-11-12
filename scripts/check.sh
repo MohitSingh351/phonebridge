@@ -10,16 +10,17 @@ python3 -I "$ROOT/protocol/tools/extract_fixtures.py" --check
 echo "==> mac: swift test"
 (
   cd "$ROOT/mac/Packages/PhoneBridgeKit"
-  out="$(swift test -j 1 2>&1)" || {
-    # SwiftPM's build planner (Command Line Tools) races when building test targets in parallel and drops
-    # the TestingMacros plugin; `-j 1` avoids it. A clean retry is kept as a safety net.
-    if grep -q "plugin for module 'TestingMacros' not found" <<<"$out"; then
-      echo "   (stale build state — cleaning and retrying)"
-      rm -rf .build && out="$(swift test -j 1 2>&1)" || { echo "$out" | tail -30; exit 1; }
-    else
-      echo "$out" | tail -30; exit 1
+  # The Command Line Tools' compiler sometimes fails to load the TestingMacros plugin ("plugin for module
+  # 'TestingMacros' not found") at random. It's not stale state — cleaning doesn't help — and a plain retry
+  # passes, so retry up to 3 times on that specific error only. `-j 1` makes it rarer.
+  for attempt in 1 2 3; do
+    if out="$(swift test -j 1 2>&1)"; then break; fi
+    if grep -q "plugin for module 'TestingMacros' not found" <<<"$out" && [ "$attempt" -lt 3 ]; then
+      echo "   (TestingMacros plugin flake — retrying)"
+      continue
     fi
-  }
+    echo "$out" | tail -30; exit 1
+  done
   grep -E "Test run with" <<<"$out"
 )
 

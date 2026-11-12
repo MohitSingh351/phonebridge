@@ -376,6 +376,26 @@ public struct NotificationItem: Codable, Sendable, Hashable {
     public var subText: String?
     public var postedAt: Int64
     public var redacted: Bool
+
+    public init(key: String, pkg: String, app: String, title: String? = nil, text: String? = nil,
+                subText: String? = nil, postedAt: Int64, redacted: Bool = false) {
+        self.key = key; self.pkg = pkg; self.app = app; self.title = title; self.text = text
+        self.subText = subText; self.postedAt = postedAt; self.redacted = redacted
+    }
+
+    enum CodingKeys: String, CodingKey { case key, pkg, app, title, text, subText, postedAt, redacted }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        pkg = try c.decode(String.self, forKey: .pkg)
+        app = try c.decode(String.self, forKey: .app)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        subText = try c.decodeIfPresent(String.self, forKey: .subText)
+        postedAt = try c.decode(Int64.self, forKey: .postedAt)
+        redacted = try c.decodeIfPresent(Bool.self, forKey: .redacted) ?? false // optional on the wire
+    }
 }
 
 public struct NotifPosted: MessagePayload {
@@ -410,6 +430,7 @@ public struct NotifIcon: MessagePayload {
     public static let maxBytes = 16 * 1024
     public var pkg: String
     public var png: B64
+    public init(pkg: String, png: B64) { self.pkg = pkg; self.png = png }
     public func validate() throws {
         guard png.data.count <= Self.maxBytes else { throw ProtocolError.invalid("icon too large") }
     }

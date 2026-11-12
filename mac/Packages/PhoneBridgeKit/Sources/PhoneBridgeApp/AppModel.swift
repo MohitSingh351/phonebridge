@@ -1,6 +1,7 @@
 import AppKit
 import FeatureClipboard
 import FeatureFiles
+import FeatureNotifications
 import Foundation
 import Observation
 import PBProtocol
@@ -39,8 +40,16 @@ final class AppModel {
     /// Features — register new ones here (each independent of the others).
     private(set) var clipboard: ClipboardFeature?
     private(set) var files: FilesFeature?
+    private(set) var notifications: NotificationsFeature?
+    /// Features enabled on each live session (drives hints like "turn on notification access on the phone").
+    var enabledFeatures: [BridgeServer.ConnectionID: [String]] = [:]
 
     var connectedNames: [String] { connected.values.map(\.name).sorted() }
+
+    /// Connected phones that haven't turned on notification mirroring (no access, or switched off).
+    var phonesWithoutNotifications: [String] {
+        connected.filter { !(enabledFeatures[$0.key] ?? []).contains("notifications") }.map(\.value.name).sorted()
+    }
 
     init() {
         macName = Host.current().localizedName ?? "Mac"
@@ -66,11 +75,14 @@ final class AppModel {
             self.clipboard = clipboard
             let files = FilesFeature()
             self.files = files
-            server.features = [clipboard, files]
+            let notifications = NotificationsFeature()
+            self.notifications = notifications
+            server.features = [clipboard, files, notifications]
             server.onStateChange = { [weak self] s in self?.serverState(s) }
             server.onEvent = { [weak self] id, e in self?.handle(id, e) }
             server.onConnectionsChanged = { [weak self] live in
                 self?.connected = live
+                self?.enabledFeatures = self?.enabledFeatures.filter { live[$0.key] != nil } ?? [:]
                 self?.reloadDevices()
             }
             server.start()
@@ -182,7 +194,12 @@ final class AppModel {
             reloadDevices()
         case .pairingFailed(let reason):
             pairingWindow?.outcome = .failed(reason)
-        case .authenticated, .unpaired:
+        case .authenticated(_, _, let enabled):
+            enabledFeatures[id] = enabled
+            reloadDevices()
+        case .enabledChanged(let enabled):
+            enabledFeatures[id] = enabled
+        case .unpaired:
             reloadDevices()
         case .message:
             break // feature routing arrives with the features (Phase 3+)

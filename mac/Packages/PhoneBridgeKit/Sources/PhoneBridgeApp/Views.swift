@@ -4,6 +4,7 @@ import PBSecurity
 import PBTransport
 import FeatureClipboard
 import FeatureFiles
+import FeatureNotifications
 import SwiftUI
 
 // NOTE: no @State / @Entry / @Animatable anywhere in this target. In the macOS 27 SDK these are compiler
@@ -78,6 +79,11 @@ struct MenuContent: View {
                 ForEach(model.devices) { d in
                     DeviceRow(device: d, connected: model.isConnected(d), asleep: model.isProbablyAsleep(d)) { model.remove(d) }
                 }
+            }
+
+            if let n = model.notifications, !model.devices.isEmpty {
+                Divider()
+                NotificationsSection(notifications: n, phonesWithout: model.phonesWithoutNotifications)
             }
 
             if let files = model.files, !model.devices.isEmpty {
@@ -299,6 +305,86 @@ struct ClipboardSection: View {
             if let e = clipboard.lastEvent {
                 Text(e).font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+// MARK: - Notifications
+
+struct NotificationsSection: View {
+    let notifications: NotificationsFeature
+    let phonesWithout: [String]
+
+    var body: some View {
+        let shown = notifications.items.prefix(5)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Notifications").font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                if !notifications.items.isEmpty {
+                    Button("Clear All") { notifications.dismissAll() }
+                        .buttonStyle(.borderless).font(.caption)
+                        .help("Dismiss these on the phone too")
+                }
+            }
+            if !phonesWithout.isEmpty {
+                Label("To see notifications here, open PhoneBridge on \(phonesWithout.joined(separator: ", ")) and allow notification access.",
+                      systemImage: "bell.slash")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if notifications.alertsAllowed == false {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Mac notifications are off for PhoneBridge — they're listed here only.", systemImage: "bell.badge.slash")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    Button("Open Notification Settings…") { notifications.openNotificationSettings() }
+                        .buttonStyle(.borderless).font(.caption)
+                }
+            }
+            if shown.isEmpty && phonesWithout.isEmpty {
+                Text("No notifications from your phone.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Array(shown)) { n in
+                NotificationRow(n: n, icon: notifications.icons[n.item.pkg]) { notifications.dismiss(n.id) }
+            }
+            if notifications.items.count > shown.count {
+                Text("\(notifications.items.count - shown.count) more in Notification Center")
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+        .onAppear { notifications.refreshPermission() }
+    }
+}
+
+struct NotificationRow: View {
+    let n: MirroredNotification
+    let icon: Data?
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Group {
+                if let icon, let img = NSImage(data: icon) {
+                    Image(nsImage: img).resizable()
+                } else {
+                    Image(systemName: "app.badge").resizable().foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(n.item.app).font(.caption).foregroundStyle(.secondary)
+                    Text(Date(timeIntervalSince1970: Double(n.item.postedAt) / 1000), style: .relative)
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+                if let t = n.item.title { Text(t).font(.callout.weight(.medium)).lineLimit(1) }
+                if let body = n.item.text ?? (n.item.redacted ? "Content hidden by Android" : nil) {
+                    Text(body).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+            Button(action: onDismiss) { Image(systemName: "xmark") }
+                .buttonStyle(.borderless).help("Dismiss on phone too").accessibilityLabel("Dismiss")
         }
     }
 }

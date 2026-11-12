@@ -37,6 +37,7 @@ dependencies {
     implementation(project(":feature:pairing"))
     implementation(project(":feature:clipboard"))
     implementation(project(":feature:files"))
+    implementation(project(":feature:notifications"))
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.work.runtime)
     implementation(libs.compose.material.icons)
