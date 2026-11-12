@@ -14,8 +14,9 @@ phone status and find-my-phone. The devices talk directly over Wi-Fi using mutua
 | Phase | State |
 |---|---|
 | 0 Foundations: spec, fixtures, protocol codecs on both platforms | ✅ |
-| 1 Secure transport and pairing | ⏳ next |
-| 2 Background reliability · 3 Status/find phone · 4 Clipboard · 5 Files · 6 Notifications · 7 Polish · 8 Hardening | – |
+| 1 Secure transport and pairing | ✅ |
+| 2 Background reliability | ✅ |
+| 3 Status/find phone · 4 Clipboard · 5 Files · 6 Notifications · 7 Polish · 8 Hardening | – |
 
 ## Changing the protocol
 

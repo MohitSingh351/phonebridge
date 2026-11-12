@@ -81,7 +81,7 @@ private fun App(graph: AppGraph, modifier: Modifier) {
     var netGranted by remember { mutableStateOf(LocalNetworkPermission.granted(context)) }
     val netLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         netGranted = it
-        if (it) graph.connection.start()
+        if (it) graph.ensureRunning()
     }
 
     when {
@@ -91,8 +91,9 @@ private fun App(graph: AppGraph, modifier: Modifier) {
         else -> Home(
             link, modifier,
             onRetry = graph.connection::retryNow,
-            onUnpair = graph.connection::unpair,
-            onPairAgain = { graph.connection.unpair(); wantsPairing = true },
+            onConnect = graph::reconnect,
+            onUnpair = graph::unpair,
+            onPairAgain = { graph.unpair(); wantsPairing = true },
         )
     }
 }
@@ -116,7 +117,10 @@ private fun LocalNetworkRationale(modifier: Modifier, onAllow: () -> Unit) {
 }
 
 @Composable
-private fun Home(link: LinkState, modifier: Modifier, onRetry: () -> Unit, onUnpair: () -> Unit, onPairAgain: () -> Unit) {
+private fun Home(
+    link: LinkState, modifier: Modifier,
+    onRetry: () -> Unit, onConnect: () -> Unit, onUnpair: () -> Unit, onPairAgain: () -> Unit,
+) {
     var confirmUnpair by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("PhoneBridge", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
@@ -143,8 +147,11 @@ private fun Home(link: LinkState, modifier: Modifier, onRetry: () -> Unit, onUnp
                 Button(onClick = onPairAgain) { Text("Pair again") }
             }
             is LinkState.Waiting -> OutlinedButton(onClick = onRetry) { Text("Retry now") }
+            LinkState.Stopped -> Button(onClick = onConnect) { Text("Connect") }
             else -> Unit
         }
+
+        SetupCards()
 
         Spacer(Modifier.weight(1f))
         Text(
@@ -169,5 +176,7 @@ private fun describe(link: LinkState): Triple<String, String, Color> = when (lin
     is LinkState.Connecting -> Triple(link.macName, "Connecting…", Color(0xFFF9A825))
     is LinkState.Waiting -> Triple(link.macName, link.reason.replaceFirstChar { it.uppercase() } + " · retrying", Color(0xFFF9A825))
     is LinkState.Removed -> Triple(link.macName, "Removed by the Mac", Color(0xFFC62828))
+    is LinkState.NoNetwork -> Triple(link.macName, "Waiting for Wi-Fi", Color.Gray)
+    LinkState.Stopped -> Triple("Mac", "Disconnected", Color.Gray)
     LinkState.NotPaired -> Triple("No Mac", "Not paired", Color.Gray)
 }

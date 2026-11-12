@@ -4,6 +4,7 @@ import Observation
 import PBProtocol
 import PBSecurity
 import PBTransport
+import ServiceManagement
 
 /// App-wide state for the menu bar UI. Owns the identity, trust store, pairing manager and server.
 @MainActor @Observable
@@ -58,7 +59,10 @@ final class AppModel {
             let server = BridgeServer(identity: identity, info: info, devices: deviceStore, pairing: pairing)
             server.onStateChange = { [weak self] s in self?.serverState(s) }
             server.onEvent = { [weak self] id, e in self?.handle(id, e) }
-            server.onConnectionsChanged = { [weak self] live in self?.connected = live }
+            server.onConnectionsChanged = { [weak self] live in
+                self?.connected = live
+                self?.reloadDevices()
+            }
             server.start()
             self.server = server
             reloadDevices()
@@ -68,6 +72,9 @@ final class AppModel {
             status = .failed(fatalError!)
         }
     }
+
+    /// Called when the app quits (menu, logout, restart, update).
+    func shutdown() { server?.shutdown() }
 
     // MARK: Pairing
 
@@ -115,6 +122,32 @@ final class AppModel {
     }
 
     func isConnected(_ device: TrustedDevice) -> Bool { connected.values.contains { $0.id == device.id } }
+
+    /// A phone that dropped off recently is most likely asleep (Doze) or briefly off Wi-Fi; it reconnects
+    /// by itself, so don't alarm the user for 15 minutes (plan §Doze).
+    static let asleepWindow: TimeInterval = 15 * 60
+
+    func isProbablyAsleep(_ device: TrustedDevice) -> Bool {
+        guard !isConnected(device), let seen = device.lastSeen else { return false }
+        return Date().timeIntervalSince(seen) < Self.asleepWindow
+    }
+
+    // MARK: Launch at login
+
+    var launchAtLogin: Bool {
+        get { SMAppService.mainApp.status == .enabled }
+        set {
+            do {
+                if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            } catch {
+                fatalError = "Couldn't change Open at Login: \(error.localizedDescription)"
+            }
+            loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
+        }
+    }
+    var loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
+
+    func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
 
     private func reloadDevices() { devices = deviceStore.all() }
 

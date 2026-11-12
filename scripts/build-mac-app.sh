@@ -5,7 +5,9 @@
 # A stable identity keeps Keychain-item access and the Local Network permission across rebuilds
 # (ad-hoc signatures change every build, so macOS would ask again each time).
 #
-# Usage: scripts/build-mac-app.sh [--open]
+# Usage: scripts/build-mac-app.sh [--open | --install]
+#   --open     run from mac/build
+#   --install  copy to ~/Applications and run from there (a stable path, needed for Open at Login)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/mac/Packages/PhoneBridgeKit"
@@ -71,7 +73,15 @@ codesign --force --options runtime --timestamp=none \
 codesign --verify --strict "$APP"
 echo "==> built $APP"
 
-if [[ "${1:-}" == "--open" ]]; then
-  pkill -x PhoneBridge 2>/dev/null || true
-  open "$APP"
-fi
+case "${1:-}" in
+  --open)
+    pkill -x PhoneBridge 2>/dev/null || true
+    open "$APP" ;;
+  --install)
+    pkill -x PhoneBridge 2>/dev/null || true
+    mkdir -p "$HOME/Applications"
+    rm -rf "$HOME/Applications/PhoneBridge.app"
+    ditto "$APP" "$HOME/Applications/PhoneBridge.app"
+    echo "==> installed to ~/Applications/PhoneBridge.app"
+    open "$HOME/Applications/PhoneBridge.app" ;;
+esac

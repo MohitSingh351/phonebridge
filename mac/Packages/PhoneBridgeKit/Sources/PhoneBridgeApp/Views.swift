@@ -10,7 +10,13 @@ import SwiftUI
 @main
 struct PhoneBridgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    private let model = AppModel()
+    private let model: AppModel
+
+    init() {
+        let m = AppModel()
+        model = m
+        AppDelegate.onTerminate = { m.shutdown() }
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -29,9 +35,16 @@ struct PhoneBridgeApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Set by the App so termination can reach the model.
+    @MainActor static var onTerminate: (() -> Void)?
+
     func applicationDidFinishLaunching(_ n: Notification) {
         // Menu-bar only (also set via LSUIElement in the bundled app).
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    func applicationWillTerminate(_ n: Notification) {
+        MainActor.assumeIsolated { Self.onTerminate?() }
     }
 }
 
@@ -61,7 +74,7 @@ struct MenuContent: View {
             } else {
                 Text("Paired phones").font(.subheadline).foregroundStyle(.secondary)
                 ForEach(model.devices) { d in
-                    DeviceRow(device: d, connected: model.isConnected(d)) { model.remove(d) }
+                    DeviceRow(device: d, connected: model.isConnected(d), asleep: model.isProbablyAsleep(d)) { model.remove(d) }
                 }
             }
 
@@ -75,6 +88,13 @@ struct MenuContent: View {
                 Label("Pair a New Phone…", systemImage: "qrcode")
             }
             .disabled({ if case .listening = model.status { false } else { true } }())
+
+            Toggle("Open at Login", isOn: Binding(get: { model.launchAtLogin }, set: { model.launchAtLogin = $0 }))
+                .toggleStyle(.checkbox)
+            if model.loginItemNeedsApproval {
+                Button("Approve in System Settings…") { model.openLoginItemsSettings() }
+                    .font(.caption)
+            }
 
             Button("Quit PhoneBridge") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
@@ -103,6 +123,7 @@ struct StatusPill: View {
 struct DeviceRow: View {
     let device: TrustedDevice
     let connected: Bool
+    let asleep: Bool
     let onRemove: () -> Void
 
     var body: some View {
@@ -110,7 +131,8 @@ struct DeviceRow: View {
             Image(systemName: "candybarphone")
             VStack(alignment: .leading, spacing: 1) {
                 Text(device.name)
-                Text(connected ? "Connected" : lastSeenText).font(.caption).foregroundStyle(.secondary)
+                Text(connected ? "Connected" : asleep ? "Asleep or away · reconnects automatically" : lastSeenText)
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button(role: .destructive) { confirmRemove() } label: { Image(systemName: "xmark.circle") }

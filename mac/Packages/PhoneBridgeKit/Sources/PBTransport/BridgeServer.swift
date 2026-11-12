@@ -27,6 +27,8 @@ public final class BridgeServer: @unchecked Sendable {
     private var usedFallbackPort = false
     private var connections: [ConnectionID: (conn: NWConnection, handler: SessionHandler?)] = [:]
     private var timer: DispatchSourceTimer?
+    private let pathMonitor = NWPathMonitor()
+    private var lastPathSignature = ""
 
     public init(identity: MacIdentity, info: MacInfo, devices: DeviceStore, pairing: PairingManager) {
         self.identity = identity
@@ -38,7 +40,19 @@ public final class BridgeServer: @unchecked Sendable {
     // MARK: Lifecycle
 
     public func start() {
-        queue.async { self.startListener(port: Self.preferredPort) }
+        queue.async {
+            self.startListener(port: Self.preferredPort)
+            // Network changed (Wi-Fi switch, new IP): re-announce so the phone's discovery finds us.
+            self.pathMonitor.pathUpdateHandler = { [weak self] path in
+                guard let self else { return }
+                let sig = path.availableInterfaces.map(\.name).joined(separator: ",") + "|\(path.status)"
+                if sig != self.lastPathSignature, !self.lastPathSignature.isEmpty {
+                    self.listener?.service = self.makeService()
+                }
+                self.lastPathSignature = sig
+            }
+            self.pathMonitor.start(queue: self.queue)
+        }
     }
 
     public func stop() {
@@ -49,6 +63,26 @@ public final class BridgeServer: @unchecked Sendable {
             self.listener?.cancel(); self.listener = nil
             self.publish(.stopped)
         }
+    }
+
+    /// Quitting: tell every phone we're going away (close 1001) so they reconnect promptly to the next
+    /// instance instead of waiting for a heartbeat timeout. Blocks briefly so the frames get sent.
+    public func shutdown() {
+        let done = DispatchSemaphore(value: 0)
+        queue.async {
+            for (_, c) in self.connections {
+                let meta = NWProtocolWebSocket.Metadata(opcode: .close)
+                meta.closeCode = .protocolCode(.goingAway)
+                let ctx = NWConnection.ContentContext(identifier: "close", metadata: [meta])
+                c.conn.send(content: nil, contentContext: ctx, isComplete: true, completion: .idempotent)
+            }
+            self.queue.asyncAfter(deadline: .now() + 0.3) {
+                for (_, c) in self.connections { c.conn.cancel() }
+                self.listener?.cancel()
+                done.signal()
+            }
+        }
+        _ = done.wait(timeout: .now() + 1)
     }
 
     /// Re-announce on Bonjour (after wake / network change).
@@ -174,6 +208,11 @@ public final class BridgeServer: @unchecked Sendable {
             perform(id, handler.start())
             receive(id)
         case .failed, .cancelled:
+            // Remember when an authenticated phone was last here (drives "asleep" vs "disconnected" in the UI).
+            if let h = entry.handler, h.isReady, var d = h.device {
+                d.lastSeen = Date()
+                try? devices.save(d)
+            }
             connections[id] = nil
             publishConnections()
         default: break

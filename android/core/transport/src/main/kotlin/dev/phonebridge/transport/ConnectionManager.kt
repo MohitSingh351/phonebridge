@@ -1,69 +1,112 @@
 package dev.phonebridge.transport
 
 import dev.phonebridge.protocol.ErrorCode
+import dev.phonebridge.protocol.PairUnpair
 import dev.phonebridge.protocol.Types
-import dev.phonebridge.security.DeviceIdentity
+import dev.phonebridge.security.MacStore
 import dev.phonebridge.security.PairedMac
-import dev.phonebridge.security.PairingStore
-import dev.phonebridge.security.PinnedTls
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 import kotlin.math.min
 import kotlin.random.Random
 
-/** What the UI shows about the link to the Mac. */
+/** What the UI and the service notification show about the link to the Mac. */
 sealed interface LinkState {
     data object NotPaired : LinkState
+    data object Stopped : LinkState
     data class Connecting(val macName: String, val attempt: Int) : LinkState
     data class Connected(val macName: String, val enabled: List<String>) : LinkState
     data class Waiting(val macName: String, val reason: String, val retryAtMs: Long) : LinkState
+    data class NoNetwork(val macName: String) : LinkState
     /** The Mac removed this phone. Stops reconnecting until the user pairs again. */
     data class Removed(val macName: String) : LinkState
 }
 
+/** Opens connections for a paired Mac. Production: Keystore key + pinned TLS. Tests: plain WebSocket. */
+interface Connector {
+    /** Null when the device key is gone (e.g. data restored to a new phone) — pairing is unusable. */
+    fun signer(mac: PairedMac): Signer?
+    fun open(host: String, port: Int, mac: PairedMac, client: SessionClient, scope: CoroutineScope,
+             onEvent: suspend (ClientEvent) -> Unit): WsConnection
+}
+
+/** Finds the Mac on the LAN when its address changed (DNS-SD). */
+fun interface MacLocator {
+    data class Address(val host: String, val port: Int)
+    suspend fun locate(macId: UUID): Address?
+}
+
 /**
- * Keeps the phone connected to its paired Mac: connect → handshake → stay up → on drop, back off
- * (1 s → 30 s with jitter) and retry. Phase 2 adds the foreground service, network callbacks and
- * discovery on top of this loop.
+ * Keeps the phone connected to its paired Mac:
+ *  - waits while there is no Wi-Fi/Ethernet, connects as soon as there is;
+ *  - drops the connection immediately when the network goes away;
+ *  - on failure tries rediscovery (the Mac's IP may have changed), then backs off 1 s → 30 s with jitter;
+ *  - stops for good when the Mac removes this phone.
+ * The foreground service (app module) keeps the process alive; this class owns only the logic.
  */
 class ConnectionManager(
-    private val store: PairingStore,
+    private val store: MacStore,
     private val phone: () -> PhoneInfo,
     private val scope: CoroutineScope,
+    private val connector: Connector,
+    private val locator: MacLocator,
+    private val online: StateFlow<Boolean>,
+    private val backoff: (Int) -> Long = { backoffMs(it) },
 ) {
-    private val _state = MutableStateFlow<LinkState>(if (store.pairedMac() == null) LinkState.NotPaired else LinkState.Waiting("Mac", "starting", 0))
+    private val _state = MutableStateFlow<LinkState>(if (store.pairedMac() == null) LinkState.NotPaired else LinkState.Stopped)
     val state: StateFlow<LinkState> = _state.asStateFlow()
 
     private var loop: Job? = null
+    private var watcher: Job? = null
     @Volatile private var current: WsConnection? = null
     @Volatile private var currentClient: SessionClient? = null
-    private var wake = MutableStateFlow(0)
+    private val wake = MutableStateFlow(0)
 
+    /** Feature messages from the Mac (routed by the app's feature registry from Phase 3). */
+    var onMessage: (suspend (ClientEvent.Message) -> Unit)? = null
+
+    val isRunning get() = loop?.isActive == true
+
+    @Synchronized
     fun start() {
         if (loop?.isActive == true) return
-        val mac = store.pairedMac() ?: run { _state.value = LinkState.NotPaired; return }
-        loop = scope.launch { runLoop(mac) }
+        if (store.pairedMac() == null) { _state.value = LinkState.NotPaired; return }
+        loop = scope.launch { runLoop() }
+        watcher = scope.launch {
+            var wasOnline = online.value
+            online.collect { now ->
+                if (!now && wasOnline) current?.close(1001, "network lost")   // don't wait for TCP timeouts
+                if (now && !wasOnline) retryNow()
+                wasOnline = now
+            }
+        }
     }
 
+    @Synchronized
     fun stop() {
         loop?.cancel(); loop = null
+        watcher?.cancel(); watcher = null
         current?.close(1000, "stopped")
+        _state.value = if (store.pairedMac() == null) LinkState.NotPaired else LinkState.Stopped
     }
 
-    /** Skip the current backoff wait (e.g. the app came to the foreground). */
+    /** Skip the current backoff wait (app opened, screen on, network back). */
     fun retryNow() { wake.value++ }
 
     /** User chose "Unpair": tell the Mac if connected, then forget everything locally. */
     fun unpair() {
         val conn = current
         val client = currentClient
-        if (conn != null && client != null) conn.submit { client.outgoing(Types.PAIR_UNPAIR, dev.phonebridge.protocol.PairUnpair) }
+        if (conn != null && client != null) conn.submit { client.outgoing(Types.PAIR_UNPAIR, PairUnpair) }
         scope.launch {
             delay(300)
             stop()
@@ -72,29 +115,41 @@ class ConnectionManager(
         }
     }
 
-    private suspend fun runLoop(mac: PairedMac) {
+    /** Send a feature message on the live session (dropped if not connected). */
+    fun send(build: (SessionClient) -> List<ClientAction>) {
+        val conn = current ?: return
+        val client = currentClient ?: return
+        conn.submit { build(client) }
+    }
+
+    private suspend fun runLoop() {
         var attempt = 0
+        var failuresHere = 0
         while (scope.isActive) {
-            val identity = DeviceIdentity.load(mac.keyAlias)
-            if (identity == null) { // key lost (e.g. backup restore): pairing is unusable
-                _state.value = LinkState.Removed(mac.name)
-                return
+            val mac = store.pairedMac() ?: run { _state.value = LinkState.NotPaired; return }
+
+            if (!online.value) {
+                _state.value = LinkState.NoNetwork(mac.name)
+                online.first { it }
+                continue
             }
+            val signer = connector.signer(mac) ?: run { _state.value = LinkState.Removed(mac.name); return }
+
             attempt++
             _state.value = LinkState.Connecting(mac.name, attempt)
-            val latest = store.pairedMac() ?: return
-            val signer = object : Signer {
-                override val fingerprint = identity.fingerprint
-                override fun sign(message: ByteArray) = identity.sign(message)
-            }
             val client = SessionClient.session(mac.macId, phone(), signer)
             var removed = false
-            val conn = WsConnection(latest.host, latest.port, PinnedTls(identity, mac.fingerprint), client, scope) { e ->
+            var wasReady = false
+            val conn = connector.open(mac.host, mac.port, mac, client, scope) { e ->
                 when (e) {
-                    is ClientEvent.Ready -> { attempt = 0; _state.value = LinkState.Connected(mac.name, e.enabled) }
+                    is ClientEvent.Ready -> {
+                        wasReady = true; attempt = 0; failuresHere = 0
+                        _state.value = LinkState.Connected(mac.name, e.enabled)
+                    }
                     ClientEvent.Revoked -> removed = true
                     is ClientEvent.Rejected -> if (e.code == ErrorCode.REVOKED) removed = true
-                    else -> Unit // feature messages: routed from Phase 3 on
+                    is ClientEvent.Message -> onMessage?.invoke(e)
+                    else -> Unit
                 }
             }
             current = conn; currentClient = client
@@ -106,20 +161,32 @@ class ConnectionManager(
                 _state.value = LinkState.Removed(mac.name)
                 return
             }
+            if (wasReady) continue // a working session dropped: reconnect right away (attempt was reset)
+
+            val unreachable = end is ConnectionEnd.Failed && !end.isTlsRejection
+            if (unreachable) failuresHere++
+            // The Mac's DHCP address may have changed: look it up after the cached address fails twice.
+            if (unreachable && failuresHere >= 2 && online.value) {
+                val found = locator.locate(mac.macId)
+                if (found != null && (found.host != mac.host || found.port != mac.port)) {
+                    store.updateAddress(found.host, found.port)
+                    failuresHere = 0
+                    continue
+                }
+            }
             val reason = when (end) {
-                is ConnectionEnd.Closed -> "disconnected (${end.code})"
+                is ConnectionEnd.Closed -> "disconnected"
                 is ConnectionEnd.Failed -> if (end.isTlsRejection) "Mac refused the secure connection" else "Mac not reachable"
             }
-            val backoff = backoffMs(attempt)
-            _state.value = LinkState.Waiting(mac.name, reason, System.currentTimeMillis() + backoff)
-            waitOrWake(backoff)
+            val wait = backoff(attempt)
+            _state.value = LinkState.Waiting(mac.name, reason, System.currentTimeMillis() + wait)
+            waitOrWake(wait)
         }
     }
 
     private suspend fun waitOrWake(ms: Long) {
         val start = wake.value
-        val deadline = System.currentTimeMillis() + ms
-        while (System.currentTimeMillis() < deadline && wake.value == start) delay(200)
+        withTimeoutOrNull(ms) { wake.first { it != start } }
     }
 
     companion object {

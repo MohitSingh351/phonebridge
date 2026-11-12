@@ -94,14 +94,24 @@ class WsConnection internal constructor(
     }
 
     fun close(code: Int = 1000, reason: String = "bye") {
-        socket?.close(code, reason)
+        closeSocket(code, reason)
         finish(ConnectionEnd.Closed(code, reason))
+    }
+
+    /**
+     * Polite close, but never wait long for the peer's reply: if the Mac is dead (half-open connection)
+     * OkHttp would otherwise keep the socket for up to 60 s.
+     */
+    private fun closeSocket(code: Int, reason: String) {
+        val ws = socket ?: return
+        ws.close(code.coerceIn(1000, 4999), reason.take(120))
+        scope.launch { delay(1_000); ws.cancel() }
     }
 
     private suspend fun perform(actions: List<ClientAction>) {
         for (a in actions) when (a) {
             is ClientAction.Send -> socket?.send(EnvelopeCodec.encode(a.envelope))
-            is ClientAction.Close -> { socket?.close(a.code.coerceIn(1000, 4999), a.reason.take(120)); finish(ConnectionEnd.Closed(a.code, a.reason)) }
+            is ClientAction.Close -> { closeSocket(a.code, a.reason); finish(ConnectionEnd.Closed(a.code, a.reason)) }
             is ClientAction.Emit -> onEvent(a.event)
         }
     }

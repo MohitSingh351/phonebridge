@@ -21,8 +21,15 @@ data class PairedMac(
     val fingerprint: ByteArray get() = Hex.decode(fingerprintHex)
 }
 
+/** Where the paired Mac is remembered. Interface so the connection logic is testable on the JVM. */
+interface MacStore {
+    fun pairedMac(): PairedMac?
+    fun updateAddress(host: String, port: Int)
+    fun clear()
+}
+
 /** App-private storage for the phone's device id and its paired Mac (one Mac in v1). */
-class PairingStore(context: Context) {
+class PairingStore(context: Context) : MacStore {
     private val prefs: SharedPreferences = context.getSharedPreferences("pb.pairing", Context.MODE_PRIVATE)
 
     /** Stable per-install id, sent as `deviceId`. A reinstall gets a new id and must re-pair. */
@@ -31,7 +38,7 @@ class PairingStore(context: Context) {
             prefs.edit().putString(KEY_PHONE_ID, it.toString()).apply()
         }
 
-    fun pairedMac(): PairedMac? {
+    override fun pairedMac(): PairedMac? {
         val id = prefs.getString("mac.id", null)?.let(Uuids::parse) ?: return null
         return PairedMac(
             macId = id,
@@ -55,12 +62,12 @@ class PairingStore(context: Context) {
     }
 
     /** Remember where the Mac was last reachable (fast reconnect before discovery). */
-    fun updateAddress(host: String, port: Int) {
+    override fun updateAddress(host: String, port: Int) {
         prefs.edit().putString("mac.host", host).putInt("mac.port", port).apply()
     }
 
     /** Forget the Mac and destroy the device key. */
-    fun clear() {
+    override fun clear() {
         pairedMac()?.let { DeviceIdentity.delete(it.keyAlias) }
         prefs.edit().remove("mac.id").remove("mac.name").remove("mac.fp").remove("mac.host")
             .remove("mac.port").remove("mac.alias").commit()
