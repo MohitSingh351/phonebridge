@@ -36,6 +36,7 @@ dependencies {
     implementation(project(":core:transport"))
     implementation(project(":feature:pairing"))
     implementation(project(":feature:clipboard"))
+    implementation(project(":feature:files"))
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.work.runtime)
     implementation(libs.compose.material.icons)

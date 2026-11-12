@@ -3,6 +3,7 @@ import CoreImage.CIFilterBuiltins
 import PBSecurity
 import PBTransport
 import FeatureClipboard
+import FeatureFiles
 import SwiftUI
 
 // NOTE: no @State / @Entry / @Animatable anywhere in this target. In the macOS 27 SDK these are compiler
@@ -79,6 +80,11 @@ struct MenuContent: View {
                 }
             }
 
+            if let files = model.files, !model.devices.isEmpty {
+                Divider()
+                FilesSection(files: files)
+            }
+
             if let clip = model.clipboard, !model.devices.isEmpty {
                 Divider()
                 ClipboardSection(clipboard: clip)
@@ -106,7 +112,13 @@ struct MenuContent: View {
                 .keyboardShortcut("q")
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 320)
+        // Drop files anywhere on the menu to send them to the phone.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let files = model.files, !urls.isEmpty else { return false }
+            files.send(urls: urls)
+            return true
+        }
     }
 }
 
@@ -287,6 +299,111 @@ struct ClipboardSection: View {
             if let e = clipboard.lastEvent {
                 Text(e).font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+// MARK: - Files
+
+struct FilesSection: View {
+    let files: FilesFeature
+
+    var body: some View {
+        let active = files.transfers.filter { !$0.state.isFinal }
+        let recent = files.transfers.filter(\.state.isFinal).prefix(5)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Files").font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    files.pickAndSend()
+                } label: {
+                    Label("Send File…", systemImage: "arrow.up.doc")
+                }
+                .controlSize(.small)
+            }
+            if files.transfers.isEmpty {
+                Text("Drop files here to send them to your phone. Files from your phone go to Downloads/PhoneBridge.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(active) { TransferRow(r: $0, files: files) }
+            if !recent.isEmpty {
+                HStack {
+                    Text("Recent").font(.caption).foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("Clear") { files.clearHistory() }.buttonStyle(.borderless).font(.caption)
+                }
+                ForEach(Array(recent)) { TransferRow(r: $0, files: files) }
+            }
+        }
+    }
+}
+
+struct TransferRow: View {
+    let r: TransferRecord
+    let files: FilesFeature
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: r.direction == .OUT ? "arrow.up.circle" : "arrow.down.circle")
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(r.direction == .OUT ? "Sent" : "Received")
+                Text(r.savedName ?? r.name).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                controls
+            }
+            if !r.state.isFinal && r.size > 0 {
+                ProgressView(value: Double(r.transferred), total: Double(r.size))
+            }
+            Text(status).font(.caption).foregroundStyle(r.state == .FAILED ? .red : .secondary)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { files.reveal(r) }
+    }
+
+    @ViewBuilder private var controls: some View {
+        HStack(spacing: 2) {
+            switch r.state {
+            case .ACTIVE, .WAITING:
+                iconButton("pause.fill", "Pause") { files.pause(r.id) }
+            case .PAUSED:
+                iconButton("play.fill", "Resume") { files.resume(r.id) }
+            case .FAILED where r.direction == .OUT:
+                iconButton("arrow.clockwise", "Retry") { files.retry(r.id) }
+            case .DONE where r.direction == .IN:
+                iconButton("magnifyingglass", "Show in Finder") { files.reveal(r) }
+            default:
+                EmptyView()
+            }
+            if !r.state.isFinal { iconButton("xmark", "Cancel") { files.cancel(r.id) } }
+        }
+    }
+
+    private func iconButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol) }
+            .buttonStyle(.borderless).help(help).accessibilityLabel(help)
+    }
+
+    private var status: String {
+        switch r.state {
+        case .WAITING: return "Waiting for phone · \(formatBytes(r.size))"
+        case .ACTIVE:
+            var s = "\(formatBytes(r.transferred)) of \(formatBytes(r.size))"
+            if r.bytesPerSec > 0 { s += " · \(formatBytes(r.bytesPerSec))/s · \(formatDuration((r.size - r.transferred) / r.bytesPerSec)) left" }
+            return s
+        case .PAUSED: return "Paused\(r.pausedBy == .REMOTE ? " on phone" : "") · \(formatBytes(r.transferred)) of \(formatBytes(r.size))"
+        case .VERIFYING: return "Checking…"
+        case .DONE: return r.direction == .OUT ? "Sent · \(formatBytes(r.size))" : "In Downloads/PhoneBridge · \(formatBytes(r.size))"
+        case .FAILED:
+            switch r.error {
+            case "insufficient_space": return "Failed: not enough space on the phone"
+            case "hash_mismatch": return "Failed: file changed or corrupted — retry"
+            case "transfer_failed": return "Failed: connection too unreliable — retry"
+            case "source_unavailable": return "Failed: file no longer accessible"
+            default: return "Failed: \(r.error ?? "unknown")"
+            }
+        case .CANCELLED: return "Cancelled"
         }
     }
 }

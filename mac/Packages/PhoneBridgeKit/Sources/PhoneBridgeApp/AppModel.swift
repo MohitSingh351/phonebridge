@@ -1,5 +1,6 @@
 import AppKit
 import FeatureClipboard
+import FeatureFiles
 import Foundation
 import Observation
 import PBProtocol
@@ -37,6 +38,7 @@ final class AppModel {
     private var server: BridgeServer?
     /// Features — register new ones here (each independent of the others).
     private(set) var clipboard: ClipboardFeature?
+    private(set) var files: FilesFeature?
 
     var connectedNames: [String] { connected.values.map(\.name).sorted() }
 
@@ -62,7 +64,9 @@ final class AppModel {
             let server = BridgeServer(identity: identity, info: info, devices: deviceStore, pairing: pairing)
             let clipboard = ClipboardFeature(macDeviceId: macId)
             self.clipboard = clipboard
-            server.features = [clipboard]
+            let files = FilesFeature()
+            self.files = files
+            server.features = [clipboard, files]
             server.onStateChange = { [weak self] s in self?.serverState(s) }
             server.onEvent = { [weak self] id, e in self?.handle(id, e) }
             server.onConnectionsChanged = { [weak self] live in

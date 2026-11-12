@@ -149,6 +149,8 @@ class ConnectionManager(
                     conn.submit { client.outgoing(mt, payload) }
                     return true
                 }
+                override fun sendBinary(frame: ByteArray): Boolean =
+                    client.isReady && !client.isClosed && conn.sendBinary(frame)
             }
             conn = connector.open(mac.host, mac.port, mac, client, scope) { e ->
                 when (e) {
@@ -166,6 +168,9 @@ class ConnectionManager(
                     }
                     else -> Unit
                 }
+            }
+            conn.onBinary = { bytes ->
+                active.firstOrNull { it.id == Features.FILES }?.let { f -> runCatching { f.onBinary(bytes) } }
             }
             current = conn; currentClient = client
             conn.open()

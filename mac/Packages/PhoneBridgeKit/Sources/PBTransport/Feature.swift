@@ -18,6 +18,11 @@ public final class FeatureLink: @unchecked Sendable, Hashable {
         server?.send(payload, to: connection)
     }
 
+    /// Binary frame (file chunks, PROTOCOL.md §9.2).
+    public func sendBinary(_ frame: Data) {
+        server?.sendBinary(frame, to: connection)
+    }
+
     public static func == (a: FeatureLink, b: FeatureLink) -> Bool { a.connection == b.connection }
     public func hash(into h: inout Hasher) { h.combine(connection) }
 }
@@ -33,10 +38,13 @@ public protocol Feature: AnyObject {
 
     func sessionStarted(_ link: FeatureLink)
     func received(_ envelope: Envelope, from link: FeatureLink)
+    /// Binary frames (only the files feature uses them).
+    func receivedBinary(_ frame: Data, from link: FeatureLink)
     func sessionEnded(_ link: FeatureLink)
 }
 
 public extension Feature {
     var version: Int { 1 }
+    func receivedBinary(_ frame: Data, from link: FeatureLink) {}
     var capability: Capability { Capability(id: id, v: version, state: state) }
 }

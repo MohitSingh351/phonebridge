@@ -1,6 +1,7 @@
 .DS_Store
 # Swift / Xcode
 mac/Packages/*/.build/
+mac/Packages/*/.build-app/
 mac/**/xcuserdata/
 mac/**/DerivedData/
 *.xcuserstate

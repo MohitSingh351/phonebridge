@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Laptop
 import androidx.compose.material3.AlertDialog
@@ -89,7 +90,7 @@ private fun App(graph: AppGraph, modifier: Modifier) {
         link is LinkState.NotPaired || wantsPairing || pairing !is PairingState.Idle ->
             PairingScreen(graph.pairing, modifier) { wantsPairing = false }
         else -> Home(
-            link, modifier,
+            link, modifier, graph.files,
             onRetry = graph.connection::retryNow,
             onConnect = graph::reconnect,
             onUnpair = graph::unpair,
@@ -118,11 +119,14 @@ private fun LocalNetworkRationale(modifier: Modifier, onAllow: () -> Unit) {
 
 @Composable
 private fun Home(
-    link: LinkState, modifier: Modifier,
+    link: LinkState, modifier: Modifier, files: dev.phonebridge.files.FilesFeature,
     onRetry: () -> Unit, onConnect: () -> Unit, onUnpair: () -> Unit, onPairAgain: () -> Unit,
 ) {
     var confirmUnpair by remember { mutableStateOf(false) }
-    Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(
+        modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
         Text("PhoneBridge", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         Card(Modifier.fillMaxWidth()) {
             Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -153,7 +157,11 @@ private fun Home(
 
         SetupCards()
 
-        Spacer(Modifier.weight(1f))
+        if (link !is LinkState.Removed) {
+            dev.phonebridge.files.FilesSection(files, connected = link is LinkState.Connected)
+        }
+
+        Spacer(Modifier.height(8.dp))
         Text(
             "Clipboard, files, notifications and Find My Phone arrive in the next updates.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

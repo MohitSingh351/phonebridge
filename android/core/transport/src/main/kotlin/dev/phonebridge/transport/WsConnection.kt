@@ -16,6 +16,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
 
@@ -40,6 +41,9 @@ class WsConnection internal constructor(
     private val scope: CoroutineScope,
     private val onEvent: suspend (ClientEvent) -> Unit,
 ) {
+    /** Binary frames from the Mac; only delivered once the session is ready. */
+    var onBinary: (suspend (ByteArray) -> Unit)? = null
+
     constructor(
         host: String,
         port: Int,
@@ -68,7 +72,8 @@ class WsConnection internal constructor(
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                // File chunks arrive in Phase 5.
+                val data = bytes.toByteArray()
+                scope.launch(serial) { if (client.isReady) onBinary?.invoke(data) }
             }
 
             // Close/failure go through the same serial queue as messages, so a message that arrived before the
@@ -87,6 +92,9 @@ class WsConnection internal constructor(
             }
         })
     }
+
+    /** Queue a binary frame (OkHttp buffers up to 16 MiB; the transfer window keeps us far below that). */
+    fun sendBinary(frame: ByteArray): Boolean = socket?.send(frame.toByteString()) ?: false
 
     /** Run actions produced outside a frame callback (e.g. a feature sending a message). */
     fun submit(actions: () -> List<ClientAction>) {

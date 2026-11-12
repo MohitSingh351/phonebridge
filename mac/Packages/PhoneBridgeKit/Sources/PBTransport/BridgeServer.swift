@@ -246,7 +246,10 @@ public final class BridgeServer: @unchecked Sendable {
             case .text:
                 if let data, let h = self.connections[id]?.handler { self.perform(id, h.receive(data)) }
             case .binary:
-                break // file chunks arrive in Phase 5
+                // Only on an authenticated session; the files feature checks the frame itself.
+                if let data, self.connections[id]?.handler?.isReady == true {
+                    DispatchQueue.main.async { self.routeBinary(id, data) }
+                }
             case .close:
                 conn.cancel(); return
             default: break
@@ -322,6 +325,20 @@ public final class BridgeServer: @unchecked Sendable {
             f.received(env, from: entry.link)
         default:
             break
+        }
+    }
+
+    @MainActor private func routeBinary(_ id: ConnectionID, _ data: Data) {
+        guard let entry = links[id], let f = entry.active.first(where: { $0.id == "files" }) else { return }
+        f.receivedBinary(data, from: entry.link)
+    }
+
+    public func sendBinary(_ frame: Data, to id: ConnectionID) {
+        queue.async {
+            guard let c = self.connections[id], c.handler?.isReady == true else { return }
+            let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
+            let ctx = NWConnection.ContentContext(identifier: "binary", metadata: [meta])
+            c.conn.send(content: frame, contentContext: ctx, isComplete: true, completion: .contentProcessed { _ in })
         }
     }
 

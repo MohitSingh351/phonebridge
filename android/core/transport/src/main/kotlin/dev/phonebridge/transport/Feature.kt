@@ -10,6 +10,9 @@ import dev.phonebridge.protocol.MessageType
 interface FeatureLink {
     /** Sends on the live session. Returns false if the session already ended. */
     fun <P : MessagePayload> send(mt: MessageType<P>, payload: P): Boolean
+
+    /** Sends a binary frame (file chunks, PROTOCOL.md §9.2). Returns false if the session ended. */
+    fun sendBinary(frame: ByteArray): Boolean
 }
 
 /**
@@ -28,6 +31,9 @@ interface Feature {
 
     /** A message for this feature arrived. */
     suspend fun onMessage(envelope: Envelope) {}
+
+    /** A binary frame arrived (only the files feature receives these). */
+    suspend fun onBinary(frame: ByteArray) {}
 
     /** The session ended (any reason). */
     fun onSessionEnded() {}

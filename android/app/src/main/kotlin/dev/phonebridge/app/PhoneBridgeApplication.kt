@@ -9,6 +9,9 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import dev.phonebridge.clipboard.ClipboardFeature
 import dev.phonebridge.clipboard.ClipboardHost
+import dev.phonebridge.files.FilesFeature
+import dev.phonebridge.files.FilesHost
+import android.content.Intent
 import dev.phonebridge.security.PairingStore
 import dev.phonebridge.transport.ConnectionManager
 import dev.phonebridge.transport.KeystoreConnector
@@ -59,7 +62,10 @@ class AppGraph(private val app: Application) {
 
     // ---- Features: register new ones here (order doesn't matter; each is independent).
     val clipboard = ClipboardFeature(app, store.phoneDeviceId, showPreview = { settings.clipboardPreview })
-    private val features = listOf(clipboard)
+    val files = FilesFeature(app, scope, openApp = {
+        Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    })
+    private val features = listOf(clipboard, files)
 
     val connection = ConnectionManager(
         store, phoneInfo, scope,
@@ -97,11 +103,12 @@ class AppGraph(private val app: Application) {
     }
 }
 
-class PhoneBridgeApplication : Application(), ClipboardHost {
+class PhoneBridgeApplication : Application(), ClipboardHost, FilesHost {
     lateinit var graph: AppGraph
         private set
 
     override val clipboard: ClipboardFeature get() = graph.clipboard
+    override val files: FilesFeature get() = graph.files
 
     override fun onCreate() {
         super.onCreate()

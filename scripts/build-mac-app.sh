@@ -54,8 +54,11 @@ CFG
 }
 
 echo "==> swift build (release)"
-(cd "$PKG" && swift build -c release --product PhoneBridge 2>&1 | grep -E "error|warning: .*Sources|Compiling|Build complete" | grep -v Compiling || true)
-BIN="$(cd "$PKG" && swift build -c release --show-bin-path)/PhoneBridge"
+# Separate scratch path: app builds must not share build state with `swift test` (mixing them makes the
+# Command Line Tools' SwiftPM lose the TestingMacros plugin on the next test build).
+SCRATCH="$PKG/.build-app"
+(cd "$PKG" && swift build -c release --product PhoneBridge --scratch-path "$SCRATCH" 2>&1 | grep -E "error|warning: .*Sources|Build complete" || true)
+BIN="$(cd "$PKG" && swift build -c release --scratch-path "$SCRATCH" --show-bin-path)/PhoneBridge"
 [ -x "$BIN" ] || { echo "build failed"; exit 1; }
 
 echo "==> assembling $APP"
