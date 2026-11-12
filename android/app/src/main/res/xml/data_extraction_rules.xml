@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pairing data is bound to a Keystore key that cannot be backed up or moved; never copy it. -->
+<data-extraction-rules>
+    <cloud-backup><exclude domain="sharedpref" path="." /></cloud-backup>
+    <device-transfer><exclude domain="sharedpref" path="." /></device-transfer>
+</data-extraction-rules>

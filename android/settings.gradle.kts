@@ -19,3 +19,6 @@ rootProject.name = "PhoneBridge"
 // Modules are added phase by phase (see the plan). Each feature module depends only on core modules.
 include(":app")
 include(":core:protocol")
+include(":core:security")
+include(":core:transport")
+include(":feature:pairing")

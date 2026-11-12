@@ -33,6 +33,10 @@ kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation(project(":core:protocol"))
+    implementation(project(":core:transport"))
+    implementation(project(":feature:pairing"))
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.compose.material.icons)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

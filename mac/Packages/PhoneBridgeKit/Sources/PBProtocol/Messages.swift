@@ -124,6 +124,13 @@ public struct PairRequest: MessagePayload {
     public var sdkInt: Int
     public var appVersion: String
 
+    public init(token: B64, deviceId: PBUUID, deviceName: String, manufacturer: String, model: String,
+                platform: String, osVersion: String, sdkInt: Int, appVersion: String) {
+        self.token = token; self.deviceId = deviceId; self.deviceName = deviceName
+        self.manufacturer = manufacturer; self.model = model; self.platform = platform
+        self.osVersion = osVersion; self.sdkInt = sdkInt; self.appVersion = appVersion
+    }
+
     public func validate() throws {
         guard token.data.count == 32 else { throw ProtocolError(.tokenInvalid, "token must be 32 bytes") }
         guard !deviceName.isEmpty, deviceName.count <= 64 else { throw ProtocolError.invalid("bad deviceName") }
