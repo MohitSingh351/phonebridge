@@ -1,6 +1,9 @@
 package dev.phonebridge.transport
 
 import dev.phonebridge.protocol.ErrorCode
+import dev.phonebridge.protocol.Features
+import dev.phonebridge.protocol.MessagePayload
+import dev.phonebridge.protocol.MessageType
 import dev.phonebridge.protocol.PairUnpair
 import dev.phonebridge.protocol.Types
 import dev.phonebridge.security.MacStore
@@ -61,6 +64,7 @@ class ConnectionManager(
     private val locator: MacLocator,
     private val online: StateFlow<Boolean>,
     private val backoff: (Int) -> Long = { backoffMs(it) },
+    private val features: List<Feature> = emptyList(),
 ) {
     private val _state = MutableStateFlow<LinkState>(if (store.pairedMac() == null) LinkState.NotPaired else LinkState.Stopped)
     val state: StateFlow<LinkState> = _state.asStateFlow()
@@ -70,9 +74,6 @@ class ConnectionManager(
     @Volatile private var current: WsConnection? = null
     @Volatile private var currentClient: SessionClient? = null
     private val wake = MutableStateFlow(0)
-
-    /** Feature messages from the Mac (routed by the app's feature registry from Phase 3). */
-    var onMessage: (suspend (ClientEvent.Message) -> Unit)? = null
 
     val isRunning get() = loop?.isActive == true
 
@@ -137,18 +138,32 @@ class ConnectionManager(
 
             attempt++
             _state.value = LinkState.Connecting(mac.name, attempt)
-            val client = SessionClient.session(mac.macId, phone(), signer)
+            val client = SessionClient.session(mac.macId, phone(), signer, capabilities = { features.map { it.capability() } })
             var removed = false
             var wasReady = false
-            val conn = connector.open(mac.host, mac.port, mac, client, scope) { e ->
+            var active: List<Feature> = emptyList()
+            lateinit var conn: WsConnection
+            val link = object : FeatureLink {
+                override fun <P : MessagePayload> send(mt: MessageType<P>, payload: P): Boolean {
+                    if (!client.isReady || client.isClosed) return false
+                    conn.submit { client.outgoing(mt, payload) }
+                    return true
+                }
+            }
+            conn = connector.open(mac.host, mac.port, mac, client, scope) { e ->
                 when (e) {
                     is ClientEvent.Ready -> {
                         wasReady = true; attempt = 0; failuresHere = 0
                         _state.value = LinkState.Connected(mac.name, e.enabled)
+                        active = features.filter { it.id in e.enabled }
+                        active.forEach { runCatching { it.onSessionStarted(link) } }
                     }
                     ClientEvent.Revoked -> removed = true
                     is ClientEvent.Rejected -> if (e.code == ErrorCode.REVOKED) removed = true
-                    is ClientEvent.Message -> onMessage?.invoke(e)
+                    is ClientEvent.Message -> {
+                        val owner = Features.idFor(e.envelope.type)
+                        active.firstOrNull { it.id == owner }?.let { f -> runCatching { f.onMessage(e.envelope) } }
+                    }
                     else -> Unit
                 }
             }
@@ -156,6 +171,7 @@ class ConnectionManager(
             conn.open()
             val end = conn.ended.await()
             current = null; currentClient = null
+            active.forEach { runCatching { it.onSessionEnded() } }
 
             if (removed || (end is ConnectionEnd.Closed && end.code == ErrorCode.REVOKED.closeCode)) {
                 _state.value = LinkState.Removed(mac.name)

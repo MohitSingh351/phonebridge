@@ -18,6 +18,13 @@ public final class BridgeServer: @unchecked Sendable {
     public var onStateChange: (@MainActor (State) -> Void)?
     public var onConnectionsChanged: (@MainActor ([ConnectionID: TrustedDevice]) -> Void)?
 
+    /// Registered features (set once at startup, before `start()`), keyed by id. Main-actor only.
+    @MainActor public var features: [Feature] = [] {
+        didSet { updateCapabilities(features.map(\.capability)) }
+    }
+    /// Live feature links per connection (main actor).
+    @MainActor private var links: [ConnectionID: (link: FeatureLink, active: [Feature])] = [:]
+
     private let identity: MacIdentity
     private var info: MacInfo
     private let devices: DeviceStore
@@ -214,6 +221,7 @@ public final class BridgeServer: @unchecked Sendable {
                 try? devices.save(d)
             }
             connections[id] = nil
+            DispatchQueue.main.async { self.sessionGone(id) }
             publishConnections()
         default: break
         }
@@ -265,7 +273,10 @@ public final class BridgeServer: @unchecked Sendable {
                     self.queue.asyncAfter(deadline: .now() + 0.5) { conn.cancel() }
                 })
             case .event(let e):
-                DispatchQueue.main.async { self.onEvent?(id, e) }
+                DispatchQueue.main.async {
+                    self.routeToFeatures(id, e)
+                    self.onEvent?(id, e)
+                }
                 if case .authenticated = e { publishConnections() }
             }
         }
@@ -291,6 +302,32 @@ public final class BridgeServer: @unchecked Sendable {
         var live: [ConnectionID: TrustedDevice] = [:]
         for (id, c) in connections { if let h = c.handler, h.isReady, let d = h.device { live[id] = d } }
         DispatchQueue.main.async { self.onConnectionsChanged?(live) }
+    }
+
+    /// Feature states changed (e.g. a permission was granted): used for the next sessions' `hello`.
+    public func updateCapabilities(_ caps: [Capability]) {
+        queue.async { self.info.capabilities = caps }
+    }
+
+    @MainActor private func routeToFeatures(_ id: ConnectionID, _ e: SessionEvent) {
+        switch e {
+        case .authenticated(let device, _, let enabled):
+            let link = FeatureLink(connection: id, device: device, server: self)
+            let active = features.filter { enabled.contains($0.id) }
+            links[id] = (link, active)
+            for f in active { f.sessionStarted(link) }
+        case .message(let env):
+            guard let entry = links[id], let owner = SessionHandler.featureId(for: env.type),
+                  let f = entry.active.first(where: { $0.id == owner }) else { return }
+            f.received(env, from: entry.link)
+        default:
+            break
+        }
+    }
+
+    @MainActor private func sessionGone(_ id: ConnectionID) {
+        guard let entry = links.removeValue(forKey: id) else { return }
+        for f in entry.active { f.sessionEnded(entry.link) }
     }
 
     /// Current listening port (0 until ready).

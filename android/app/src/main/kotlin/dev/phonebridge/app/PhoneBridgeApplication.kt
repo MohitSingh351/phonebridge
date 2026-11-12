@@ -7,6 +7,8 @@ import android.provider.Settings
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import dev.phonebridge.clipboard.ClipboardFeature
+import dev.phonebridge.clipboard.ClipboardHost
 import dev.phonebridge.security.PairingStore
 import dev.phonebridge.transport.ConnectionManager
 import dev.phonebridge.transport.KeystoreConnector
@@ -26,6 +28,11 @@ class AppSettings(context: Context) {
     var autoConnect: Boolean
         get() = prefs.getBoolean("autoConnect", true)
         set(v) { prefs.edit().putBoolean("autoConnect", v).apply() }
+
+    /** Show the text of items copied from the Mac in the little "Copied from Mac" notification. */
+    var clipboardPreview: Boolean
+        get() = prefs.getBoolean("clipboardPreview", true)
+        set(v) { prefs.edit().putBoolean("clipboardPreview", v).apply() }
 }
 
 /**
@@ -50,11 +57,16 @@ class AppGraph(private val app: Application) {
         )
     }
 
+    // ---- Features: register new ones here (order doesn't matter; each is independent).
+    val clipboard = ClipboardFeature(app, store.phoneDeviceId, showPreview = { settings.clipboardPreview })
+    private val features = listOf(clipboard)
+
     val connection = ConnectionManager(
         store, phoneInfo, scope,
         connector = KeystoreConnector(),
         locator = NsdMacLocator(app),
         online = lanAvailability(app, scope),
+        features = features,
     )
 
     val pairing = PairingController(store, phoneInfo, scope, onPaired = {
@@ -85,9 +97,11 @@ class AppGraph(private val app: Application) {
     }
 }
 
-class PhoneBridgeApplication : Application() {
+class PhoneBridgeApplication : Application(), ClipboardHost {
     lateinit var graph: AppGraph
         private set
+
+    override val clipboard: ClipboardFeature get() = graph.clipboard
 
     override fun onCreate() {
         super.onCreate()

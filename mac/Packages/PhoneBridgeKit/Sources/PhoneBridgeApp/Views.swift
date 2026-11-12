@@ -2,6 +2,7 @@ import AppKit
 import CoreImage.CIFilterBuiltins
 import PBSecurity
 import PBTransport
+import FeatureClipboard
 import SwiftUI
 
 // NOTE: no @State / @Entry / @Animatable anywhere in this target. In the macOS 27 SDK these are compiler
@@ -76,6 +77,11 @@ struct MenuContent: View {
                 ForEach(model.devices) { d in
                     DeviceRow(device: d, connected: model.isConnected(d), asleep: model.isProbablyAsleep(d)) { model.remove(d) }
                 }
+            }
+
+            if let clip = model.clipboard, !model.devices.isEmpty {
+                Divider()
+                ClipboardSection(clipboard: clip)
             }
 
             Divider()
@@ -258,5 +264,29 @@ struct QRCodeImage: View {
         let img = NSImage(size: rep.size)
         img.addRepresentation(rep)
         return img
+    }
+}
+
+// MARK: - Clipboard
+
+struct ClipboardSection: View {
+    @Bindable var clipboard: ClipboardFeature
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Send Mac clipboard to phone", isOn: $clipboard.autoSend)
+                .toggleStyle(.checkbox)
+            if clipboard.accessDenied {
+                Label("Clipboard access is set to Deny. Allow PhoneBridge in System Settings → Privacy & Security → Paste from Other Apps.",
+                      systemImage: "hand.raised.fill")
+                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            } else if clipboard.autoSend {
+                Text("If macOS asks to allow pasting, choose “Always Allow” for automatic sync. Password-manager items are never sent.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let e = clipboard.lastEvent {
+                Text(e).font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }

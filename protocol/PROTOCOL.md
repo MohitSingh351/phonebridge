@@ -301,9 +301,16 @@ restore on stop, timeout, service destruction, and on next start if a persisted 
 - **Loop prevention (MUST):**
   1. Each side stores `lastAppliedHash` — the hash of the last item it *received and applied*.
   2. A local clipboard change whose hash equals `lastAppliedHash` is never sent.
-  3. Once a *different* local item is seen, `lastAppliedHash` is cleared — so re-copying an older text
+  3. Each side also stores `lastSentHash`; a local change equal to it is not sent again (copying the same
+     text twice sends once). Receiving an item clears `lastSentHash`.
+  4. Once a *different* local item is sent, `lastAppliedHash` is cleared — so re-copying an older text
      deliberately still syncs.
-  4. The Mac also ignores the pasteboard `changeCount` produced by its own write.
+  5. The Mac also ignores the pasteboard `changeCount` produced by its own write.
+- **Directions:** Mac → phone is automatic (the Mac watches `changeCount`). Phone → Mac is always an
+  explicit user action (Quick Settings tile, notification action, or share sheet), because Android only
+  lets the focused app read the clipboard.
+- **Privacy:** the Mac reads the pasteboard only after `changeCount` changes, never reads items carrying the
+  markers above, and honours macOS's "Paste from Other Apps" setting.
 - The Mac MUST NOT send items marked `org.nspasteboard.ConcealedType` or `org.nspasteboard.TransientType`.
 
 ## 9. Feature: `files`
@@ -459,8 +466,9 @@ Any error during the handshake (before `ready`) is fatal.
 ## 12. Offline queue (phone)
 
 The phone MAY queue outbound messages while disconnected. Queued messages get a fresh `id`/`seq`/`ts` at
-send time. TTL per type: `clipboard.set` 5 min; `status.*`, `notif.*` are **never queued** (state is
-re-sent after `ready`). File transfers are persisted separately (§9.3).
+send time. TTL per type: `clipboard.set` 5 min, **newest item only** (older pending items are replaced — sending a
+stale series would just overwrite each other); `status.*`, `notif.*` are **never queued** (state is
+re-sent after `ready`). The Mac applies the same rule to its outgoing clipboard. File transfers are persisted separately (§9.3).
 
 ## 13. Versioning
 

@@ -1,4 +1,5 @@
 import AppKit
+import FeatureClipboard
 import Foundation
 import Observation
 import PBProtocol
@@ -34,6 +35,8 @@ final class AppModel {
     private let deviceStore: DeviceStore = KeychainDeviceStore()
     private let pairing = PairingManager()
     private var server: BridgeServer?
+    /// Features — register new ones here (each independent of the others).
+    private(set) var clipboard: ClipboardFeature?
 
     var connectedNames: [String] { connected.values.map(\.name).sorted() }
 
@@ -57,6 +60,9 @@ final class AppModel {
                                fingerprint: identity.fingerprint, port: BridgeServer.preferredPort,
                                capabilities: []) // features register here from Phase 3 on
             let server = BridgeServer(identity: identity, info: info, devices: deviceStore, pairing: pairing)
+            let clipboard = ClipboardFeature(macDeviceId: macId)
+            self.clipboard = clipboard
+            server.features = [clipboard]
             server.onStateChange = { [weak self] s in self?.serverState(s) }
             server.onEvent = { [weak self] id, e in self?.handle(id, e) }
             server.onConnectionsChanged = { [weak self] live in

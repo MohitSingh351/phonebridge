@@ -105,6 +105,9 @@ class BridgeService : Service() {
             this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE,
         )
+        val sendClip = PendingIntent.getActivity(
+            this, 2, dev.phonebridge.clipboard.ClipboardSendActivity.intent(this), PendingIntent.FLAG_IMMUTABLE,
+        )
         val disconnect = PendingIntent.getService(
             this, 1, Intent(this, BridgeService::class.java).setAction(ACTION_DISCONNECT), PendingIntent.FLAG_IMMUTABLE,
         )
@@ -119,6 +122,7 @@ class BridgeService : Service() {
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .apply { if (state is LinkState.Connected || state is LinkState.Waiting) addAction(0, "Send clipboard", sendClip) }
             .addAction(0, "Disconnect", disconnect)
             .build()
     }

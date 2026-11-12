@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "PBProtocol", targets: ["PBProtocol"]),
         .library(name: "PBSecurity", targets: ["PBSecurity"]),
         .library(name: "PBTransport", targets: ["PBTransport"]),
+        .library(name: "FeatureClipboard", targets: ["FeatureClipboard"]),
         .executable(name: "PhoneBridge", targets: ["PhoneBridgeApp"]),
     ],
     dependencies: [
@@ -29,12 +30,15 @@ let package = Package(
             ]
         ),
         .target(name: "PBTransport", dependencies: ["PBProtocol", "PBSecurity"]),
+        // Features: each depends only on core modules, never on another feature.
+        .target(name: "FeatureClipboard", dependencies: ["PBProtocol", "PBTransport"]),
         .executableTarget(
             name: "PhoneBridgeApp",
-            dependencies: ["PBProtocol", "PBSecurity", "PBTransport"]
+            dependencies: ["PBProtocol", "PBSecurity", "PBTransport", "FeatureClipboard"]
         ),
         .testTarget(name: "PBProtocolTests", dependencies: ["PBProtocol"]),
         .testTarget(name: "PBSecurityTests", dependencies: ["PBSecurity"]),
         .testTarget(name: "PBTransportTests", dependencies: ["PBTransport", "PBSecurity"]),
+        .testTarget(name: "FeatureClipboardTests", dependencies: ["FeatureClipboard"]),
     ]
 )

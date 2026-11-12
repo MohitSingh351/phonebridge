@@ -1,0 +1,4 @@
+<resources>
+    <string name="clipboard_tile_label">Send to Mac</string>
+    <string name="clipboard_share_label">Send to Mac clipboard</string>
+</resources>
